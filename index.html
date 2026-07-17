@@ -188,7 +188,7 @@ body.presentation .save-status{ display:none !important; }
   color: var(--text); padding-bottom:6px; border-bottom:1px solid var(--line);
 }
 .stock-summary-list{
-  display:flex; flex-direction:column; gap:1px; max-height:180px; overflow-y:auto;
+  display:flex; flex-direction:column; gap:1px; flex: 1 1 auto; min-height:0; overflow-y:auto;
 }
 .stock-summary-row{
   display:flex; align-items:baseline; gap:6px; padding:4px 2px; border-bottom:1px dashed var(--line);
@@ -240,10 +240,12 @@ body.presentation .save-status{ display:none !important; }
 .district-path:hover{ filter: brightness(1.15) drop-shadow(0 0 8px currentColor); }
 .district-path.selected{ stroke: var(--text); stroke-width:2.2; filter: brightness(1.08) drop-shadow(0 0 10px currentColor); }
 .map-caption{
-  position:absolute; bottom:8px; left:50%; transform:translateX(-50%);
+  position:absolute; bottom:10px; left:18px; right:18px; text-align:left;
   font-size:10.5px; color: var(--text-3); letter-spacing:1.5px; text-transform:uppercase;
   pointer-events:none;
+  display:flex; flex-direction:column; gap:2px;
 }
+.map-caption span{ display:block; }
 
 /* ---------- District modal content ---------- */
 .district-header{ display:flex; align-items:center; gap:16px; margin-bottom: 22px; }
@@ -439,6 +441,11 @@ table.proj-table input.proj-profit:focus{ outline:none; border-bottom:1px dashed
 .popup-field-control textarea.popup-field-input:focus{ outline:none; border-color: var(--accent); }
 .popup-field-control .status-dropdown{ width:100%; }
 .popup-field-control .status-trigger{ width:100%; }
+.popup-field-static{
+  width:100%; background: var(--card-2); border:1px solid var(--line); border-radius: var(--radius-sm);
+  color: var(--text); font-family:'Inter'; font-size:14px; padding:9px 12px; box-sizing:border-box;
+}
+.popup-field-auto{ color: var(--text-3); font-size:11px; letter-spacing:.3px; }
 @media (max-width: 560px){
   .district-preview-wrap{ flex-basis:100%; width:160px; height:160px; }
 }
@@ -550,7 +557,7 @@ body.presentation .map-caption{ font-size:12px; }
         <div class="map-card-body">
           <div class="map-wrap">
             <svg id="existingStockMap" class="district-map" xmlns="http://www.w3.org/2000/svg"></svg>
-            <div class="map-caption" id="existingMapCaption">25 Districts | Click a district for details</div>
+            <div class="map-caption" id="existingMapCaption"><span>25 Districts</span></div>
           </div>
           <div class="stock-summary-card" id="existingStockSummaryCard">
             <div class="stock-summary-title">Existing Stock Summary</div>
@@ -567,7 +574,7 @@ body.presentation .map-caption{ font-size:12px; }
         <div class="map-card-body">
           <div class="map-wrap">
             <svg id="newStockMap" class="district-map" xmlns="http://www.w3.org/2000/svg"></svg>
-            <div class="map-caption" id="newMapCaption">25 Districts | Click a district for details</div>
+            <div class="map-caption" id="newMapCaption"><span>25 Districts</span></div>
           </div>
           <div class="stock-summary-card" id="newStockSummaryCard">
             <div class="stock-summary-title">New Stock Summary</div>
@@ -690,9 +697,23 @@ function uid(){ return Math.random().toString(36).slice(2,9); }
 /* Each district holds an ARRAY of project records for a given map.
    A fresh project starts with that map's own value field at 0. */
 function defaultProjectRecord(mapKey){
-  const rec = { id: uid(), projectName: "Untitled Project", notes: "", status: "blue", lastUpdated: "" };
+  const rec = { id: uid(), projectName: "Untitled Project", notes: "", status: "blue", lastUpdated: todayISO() };
   rec[MAP_CONFIG[mapKey].valueField] = 0;
   return rec;
+}
+function todayISO(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function formatDateDisplay(iso){
+  if(!iso) return "\u2014";
+  const parts = iso.split("-").map(Number);
+  if(parts.length !== 3 || parts.some(isNaN)) return iso;
+  const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+  return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
 function storageAvailable(){
@@ -884,7 +905,9 @@ function renderStockSummary(mapKey){
 
   totalEl.textContent = formatFullNum(total);
   if(captionEl){
-    captionEl.textContent = `${activeDistricts} of ${DISTRICT_NAMES.length} Districts | ${items.length} Project${items.length===1?"":"s"} | Click a district for details`;
+    captionEl.innerHTML = `
+      <span>${activeDistricts} of ${DISTRICT_NAMES.length} Districts</span>
+      <span>${items.length} Project${items.length===1?"":"s"}</span>`;
   }
 }
 function renderStockSummaries(){
@@ -1087,7 +1110,7 @@ function fieldControlHtml(fieldKey, record){
     return `<textarea class="popup-field-input popup-field-textarea" data-field="${fieldKey}" placeholder="Add a note\u2026" rows="2">${escapeHtml(value || "")}</textarea>`;
   }
   if(def.type === "date"){
-    return `<input type="date" class="popup-field-input" data-field="${fieldKey}" value="${escapeAttr(value || "")}"/>`;
+    return `<div class="popup-field-static">${escapeHtml(formatDateDisplay(value))} <span class="popup-field-auto">(auto)</span></div>`;
   }
   if(def.type === "status"){
     return statusDropdownHtml(value || "blue");
@@ -1123,8 +1146,10 @@ function openProjectPopup(name, mapKey, projectId){
   renderPopupFields(name, mapKey, projectId);
   $("#projectNameInput").addEventListener("change", e => {
     record.projectName = e.target.value;
+    record.lastUpdated = todayISO();
     saveState();
     renderStockSummaries();
+    renderPopupFields(name, mapKey, projectId);
   });
   $("#districtModalClose").addEventListener("click", closeDistrictModal);
   $("#backToTilesBtn").addEventListener("click", () => openDistrictTiles(name, mapKey));
@@ -1162,11 +1187,13 @@ function renderPopupFields(name, mapKey, projectId){
 
   cfg.fields.forEach(key => {
     const def = FIELD_REGISTRY[key];
+    if(def.type === "date") return; // auto-managed display, not directly editable
     const row = wrap.querySelector(`[data-field-row="${key}"]`);
     if(!row) return;
     if(def.type === "status"){
       wireStatusDropdown(row, val => {
         record[key] = val;
+        record.lastUpdated = todayISO();
         saveState();
         renderPopupFields(name, mapKey, projectId);
       });
@@ -1175,6 +1202,7 @@ function renderPopupFields(name, mapKey, projectId){
       input.addEventListener("change", () => {
         if(def.type === "number") record[key] = Math.max(0, parseFloat(input.value) || 0);
         else record[key] = input.value;
+        record.lastUpdated = todayISO();
         saveState();
         const affectsColor = def.type === "number" && key === cfg.valueField;
         if(affectsColor) renderMaps();
