@@ -780,6 +780,32 @@ let githubPushTimer = null; // debounce handle so rapid edits collapse into one 
 let githubPulling = false;
 let githubPushing = false;
 
+/* Which specific projects this browser has changed since its last
+   successful push, keyed "mapKey|districtKey|projectId". When a pull
+   happens (on load, on a timer, or after a conflicted push), any
+   project NOT in these sets gets overwritten by the server's version —
+   but anything in dirtyProjectRefs keeps this browser's version, and
+   anything in deletedProjectRefs stays deleted. This is what lets two
+   people edit different projects around the same time without one of
+   them silently losing their change. */
+const dirtyProjectRefs = new Map();
+const deletedProjectRefs = new Set();
+function refKey(mapKey, districtKey, projectId){ return `${mapKey}|${districtKey}|${projectId}`; }
+function markProjectDirty(mapKey, districtKey, projectId){
+  const key = refKey(mapKey, districtKey, projectId);
+  dirtyProjectRefs.set(key, { mapKey, districtKey, projectId });
+  deletedProjectRefs.delete(key);
+}
+function markProjectDeleted(mapKey, districtKey, projectId){
+  const key = refKey(mapKey, districtKey, projectId);
+  dirtyProjectRefs.delete(key);
+  deletedProjectRefs.add(key);
+}
+function clearDirtyTracking(){
+  dirtyProjectRefs.clear();
+  deletedProjectRefs.clear();
+}
+
 function getGithubToken(){
   try{ return localStorage.getItem(GITHUB_TOKEN_KEY) || ""; } catch(e){ return ""; }
 }
@@ -825,11 +851,42 @@ function setGithubStatus(kind, message){
   if(panelStatus && message) panelStatus.textContent = message;
 }
 
-/* Pull the latest data.json from the repo and make it this browser's
-   working state. Runs on load, and works even with no token (public
-   repo reads are unauthenticated), so anyone can at least see the
-   latest shared data without setting anything up. */
-async function githubPull(){
+/* Merge one map's remote project list with this browser's local one:
+   remote wins for anything this browser hasn't touched (so you see
+   other people's work), local wins for anything this browser has
+   dirtied since its last successful push (so your own not-yet-synced
+   edit doesn't get wiped out by someone else's pull), and anything
+   this browser deleted stays deleted even if still present remotely. */
+function mergeProjectArray(mapKey, districtKey, remoteArr, localArr){
+  const merged = [];
+  const seen = new Set();
+  (remoteArr || []).forEach(remoteProject => {
+    const key = refKey(mapKey, districtKey, remoteProject.id);
+    if(deletedProjectRefs.has(key)) return; // deleted locally — stays deleted
+    if(dirtyProjectRefs.has(key)){
+      const localProject = (localArr || []).find(p => p.id === remoteProject.id);
+      merged.push(localProject || remoteProject);
+    } else {
+      merged.push(remoteProject);
+    }
+    seen.add(remoteProject.id);
+  });
+  (localArr || []).forEach(localProject => {
+    if(seen.has(localProject.id)) return;
+    const key = refKey(mapKey, districtKey, localProject.id);
+    if(deletedProjectRefs.has(key)) return;
+    merged.push(localProject); // exists locally but not remotely yet (newly added here)
+  });
+  return merged;
+}
+
+/* Pull the latest data.json from the repo. With mergeLocal=false
+   (the default — used on load and on the background timer, when this
+   browser has no pending edits) it simply becomes this browser's
+   working state. With mergeLocal=true (used when resolving a push
+   conflict) it merges instead of overwriting, per mergeProjectArray
+   above, so this browser's un-synced edit survives. */
+async function githubPull(mergeLocal){
   if(githubPulling) return;
   githubPulling = true;
   setGithubStatus("syncing", "Pulling latest data\u2026");
@@ -850,16 +907,16 @@ async function githubPull(){
     const decoded = b64DecodeUnicode(json.content);
     const parsed = JSON.parse(decoded);
     if(parsed.districtLabels) Object.assign(state.districtLabels, parsed.districtLabels);
-    if(parsed.existingStockData){
-      DISTRICT_NAMES.forEach(name => {
-        state.existingStockData[name] = Array.isArray(parsed.existingStockData[name]) ? parsed.existingStockData[name] : [];
-      });
-    }
-    if(parsed.newStockData){
-      DISTRICT_NAMES.forEach(name => {
-        state.newStockData[name] = Array.isArray(parsed.newStockData[name]) ? parsed.newStockData[name] : [];
-      });
-    }
+    DISTRICT_NAMES.forEach(name => {
+      const remoteExisting = (parsed.existingStockData && parsed.existingStockData[name]) || [];
+      const remoteNew = (parsed.newStockData && parsed.newStockData[name]) || [];
+      state.existingStockData[name] = mergeLocal
+        ? mergeProjectArray("existing", name, remoteExisting, state.existingStockData[name])
+        : remoteExisting;
+      state.newStockData[name] = mergeLocal
+        ? mergeProjectArray("new", name, remoteNew, state.newStockData[name])
+        : remoteNew;
+    });
     renderMaps();
     if(state.activeTab === "performance") renderPerformance();
     setGithubStatus(getGithubToken() ? "connected" : "", `Synced with ${GITHUB_OWNER}/${GITHUB_REPO} just now.`);
@@ -872,8 +929,12 @@ async function githubPull(){
 
 /* Push the current state to data.json in the repo. Requires a token
    (writing needs auth even on a public repo). Debounced by
-   scheduleGithubPush() so a burst of edits becomes one commit. */
-async function githubPush(){
+   scheduleGithubPush() so a burst of edits becomes one commit. On a
+   conflict (someone else saved first), it merges their version with
+   this browser's un-synced edits and retries automatically instead of
+   just discarding this browser's change. */
+async function githubPush(retriesLeft){
+  if(retriesLeft === undefined) retriesLeft = 2;
   const token = getGithubToken();
   if(!token){
     setGithubStatus("", "Connect a GitHub token above to save changes for everyone.");
@@ -900,10 +961,14 @@ async function githubPush(){
       body: JSON.stringify(body),
     });
     if(res.status === 409 || res.status === 422){
-      // Someone else pushed since we last pulled — pull their latest rather than overwrite it.
-      setGithubStatus("error", "Someone else just saved changes \u2014 pulling their latest. Please redo your last edit.");
-      await githubPull();
-      return;
+      githubPushing = false;
+      if(retriesLeft <= 0){
+        setGithubStatus("error", "Couldn't save \u2014 too many people saving at once. Try again in a moment.");
+        return;
+      }
+      setGithubStatus("syncing", "Someone else just saved \u2014 merging with their changes\u2026");
+      await githubPull(true); // merge: keep this browser's un-synced edits, take everything else from the server
+      return githubPush(retriesLeft - 1);
     }
     if(!res.ok){
       const detail = await res.json().catch(() => null);
@@ -911,6 +976,7 @@ async function githubPush(){
     }
     const json = await res.json();
     githubFileSha = json.content && json.content.sha ? json.content.sha : githubFileSha;
+    clearDirtyTracking(); // this browser's edits are now confirmed saved
     setGithubStatus("connected", "All changes saved to GitHub.");
   } catch(e){
     setGithubStatus("error", `Save failed: ${e.message || "check your token has write access to this repo."}`);
@@ -921,7 +987,20 @@ async function githubPush(){
 function scheduleGithubPush(){
   if(!getGithubToken()) return; // nothing to push without a token
   clearTimeout(githubPushTimer);
-  githubPushTimer = setTimeout(githubPush, 1200);
+  githubPushTimer = setTimeout(() => { githubPushTimer = null; githubPush(); }, 1200);
+}
+/* Called right before a pull that would otherwise race a pending
+   debounced save (e.g. closing a popup right after editing a field).
+   If a save is waiting to fire, send it right now and wait for it —
+   THEN pull — so the pull can never arrive first and wipe out an edit
+   that hadn't been sent yet. */
+async function flushGithubPushThenPull(){
+  if(githubPushTimer){
+    clearTimeout(githubPushTimer);
+    githubPushTimer = null;
+    await githubPush();
+  }
+  await githubPull();
 }
 
 function toggleGithubPanel(force){
@@ -1227,7 +1306,9 @@ function openDistrictTiles(name, mapKey){
   renderProjectTiles(name, mapKey);
   $("#districtModalClose").addEventListener("click", closeDistrictModal);
   $("#addProjectBtn").addEventListener("click", () => {
-    datasetFor(mapKey)[name].push(defaultProjectRecord(mapKey));
+    const newProject = defaultProjectRecord(mapKey);
+    datasetFor(mapKey)[name].push(newProject);
+    markProjectDirty(mapKey, name, newProject.id);
     saveState();
     renderMaps();
     renderProjectTiles(name, mapKey);
@@ -1271,6 +1352,7 @@ function renderProjectTiles(name, mapKey){
       const list = datasetFor(mapKey)[name];
       const idx = list.findIndex(p => p.id === id);
       if(idx > -1) list.splice(idx, 1);
+      markProjectDeleted(mapKey, name, id);
       saveState();
       renderMaps();
       renderProjectTiles(name, mapKey);
@@ -1331,6 +1413,7 @@ function openProjectPopup(name, mapKey, projectId){
   $("#projectNameInput").addEventListener("change", e => {
     record.projectName = e.target.value;
     record.lastUpdated = todayISO();
+    markProjectDirty(mapKey, name, projectId);
     saveState();
     renderStockSummaries();
     renderPopupFields(name, mapKey, projectId);
@@ -1346,7 +1429,7 @@ function closeDistrictModal(){
   state.openDistrict = null;
   state.openProjectId = null;
   renderMaps();
-  githubPull();
+  flushGithubPushThenPull();
 }
 function renderPopupFields(name, mapKey, projectId){
   const cfg = MAP_CONFIG[mapKey];
@@ -1379,6 +1462,7 @@ function renderPopupFields(name, mapKey, projectId){
       wireStatusDropdown(row, val => {
         record[key] = val;
         record.lastUpdated = todayISO();
+        markProjectDirty(mapKey, name, projectId);
         saveState();
         renderPopupFields(name, mapKey, projectId);
       });
@@ -1388,6 +1472,7 @@ function renderPopupFields(name, mapKey, projectId){
         if(def.type === "number") record[key] = Math.max(0, parseFloat(input.value) || 0);
         else record[key] = input.value;
         record.lastUpdated = todayISO();
+        markProjectDirty(mapKey, name, projectId);
         saveState();
         const affectsColor = def.type === "number" && key === cfg.valueField;
         if(affectsColor) renderMaps();
