@@ -27,16 +27,7 @@
     "Vavuniya": "Vavuniya"
   },
   "existingStockData": {
-    "Ampara": [
-      {
-        "id": "o681rsg",
-        "projectName": "av",
-        "notes": "",
-        "status": "blue",
-        "lastUpdated": "2026-07-17",
-        "existingStock": 20
-      }
-    ],
+    "Ampara": [],
     "Anuradhapura": [],
     "Badulla": [],
     "Batticaloa": [],
