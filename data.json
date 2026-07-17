@@ -67,7 +67,16 @@
     "Kandy": [],
     "Kegalle": [],
     "Kilinochchi": [],
-    "Kurunegala": [],
+    "Kurunegala": [
+      {
+        "id": "ydvj8me",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-17",
+        "newStock": 0
+      }
+    ],
     "Mannar": [],
     "Matale": [],
     "Matara": [],
