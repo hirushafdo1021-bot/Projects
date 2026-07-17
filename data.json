@@ -39,6 +39,14 @@
         "status": "blue",
         "lastUpdated": "2026-07-17",
         "existingStock": 2
+      },
+      {
+        "id": "qz6xaqb",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-17",
+        "existingStock": 0
       }
     ],
     "Galle": [],
