@@ -142,13 +142,28 @@ body.presentation .global-search{ display:none; }
 .btn.icon{ padding:8px; }
 .btn:disabled{ opacity:.35; cursor:not-allowed; transform:none; }
 
-.save-status{
-  font-size:11px; font-weight:600; letter-spacing:.2px; white-space:nowrap; padding:6px 10px;
-  border-radius:999px; display:none;
+/* ---------- GitHub sync ---------- */
+.github-sync-wrap{ position:relative; }
+#githubSyncBtn.connected{ border-color: rgba(0,200,150,0.4); color:#00875A; }
+#githubSyncBtn.syncing{ opacity:.7; }
+#githubSyncBtn.error{ border-color: rgba(194,59,59,0.4); color: var(--warn); }
+.github-sync-panel{
+  position:absolute; top:calc(100% + 8px); right:0; width:300px; z-index:150;
+  background: var(--card); border:1px solid var(--line-strong); border-radius:14px; padding:16px;
+  box-shadow: 0 16px 40px -12px rgba(30,10,18,0.25); display:none;
 }
-.save-status.ok{ display:inline-flex; color: var(--text-3); background: rgba(30,10,18,0.05); }
-.save-status.warn{ display:inline-flex; color: var(--warn); background: rgba(194,59,59,0.12); border:1px solid rgba(194,59,59,0.3); }
-body.presentation .save-status{ display:none !important; }
+.github-sync-panel.open{ display:block; }
+.github-sync-panel-title{ font-family:'Fraunces', serif; font-weight:600; font-size:14px; margin-bottom:8px; }
+.github-sync-panel-text{ font-size:11.5px; line-height:1.5; color: var(--text-2); margin:0 0 10px; }
+.github-sync-panel-text a{ color: var(--accent); }
+.github-token-input{
+  width:100%; background: var(--card-2); border:1px solid var(--line-strong); border-radius:8px;
+  color: var(--text); font-family:'IBM Plex Mono', monospace; font-size:12px; padding:8px 10px; margin-bottom:10px;
+}
+.github-token-input:focus{ outline:none; border-color: var(--accent); }
+.github-sync-panel-actions{ display:flex; gap:8px; }
+.github-sync-panel-status{ font-size:11px; color: var(--text-3); margin-top:9px; line-height:1.4; }
+body.presentation .github-sync-wrap{ display:none !important; }
 
 /* ---------- Views ---------- */
 .view{ flex:1 1 auto; min-height:0; }
@@ -545,7 +560,23 @@ body.presentation .map-caption{ font-size:12px; }
       <div class="search-results" id="searchResults"></div>
     </div>
     <div class="actions">
-      <span class="save-status" id="saveStatus"></span>
+      <div class="github-sync-wrap" id="githubSyncWrap">
+        <button class="btn small" id="githubSyncBtn" title="Connect this browser to GitHub so changes sync automatically">&#9729; GitHub</button>
+        <div class="github-sync-panel" id="githubSyncPanel">
+          <div class="github-sync-panel-title">Sync with GitHub</div>
+          <p class="github-sync-panel-text">
+            Data auto-syncs to <strong>hirushafdo1021-bot/Projects</strong> (main). Paste a
+            <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">Personal Access Token</a>
+            with write access to this repo. It's saved only in this browser — never sent anywhere but GitHub.
+          </p>
+          <input type="password" id="githubTokenInput" class="github-token-input" placeholder="ghp_&hellip; or github_pat_&hellip;" autocomplete="off"/>
+          <div class="github-sync-panel-actions">
+            <button class="btn small primary" id="githubTokenSaveBtn">Connect</button>
+            <button class="btn small ghost" id="githubTokenClearBtn">Disconnect</button>
+          </div>
+          <div class="github-sync-panel-status" id="githubSyncPanelStatus"></div>
+        </div>
+      </div>
       <button class="btn" id="fullscreenBtn">&#9974; Present</button>
     </div>
   </header>
@@ -716,71 +747,224 @@ function formatDateDisplay(iso){
   return dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function storageAvailable(){
+/* ---------------- Persistence ----------------
+   GitHub is the only place dashboard data is saved — see the GITHUB SYNC
+   module below. saveState() just triggers a (debounced) push to the
+   repo's data.json. There is no browser-local copy of the data itself,
+   so an edit only survives once it has actually synced to GitHub; if
+   you're offline or not connected with a token, keep the tab open until
+   the GitHub button shows "Synced" before closing it. */
+function saveState(){
+  scheduleGithubPush();
+}
+
+/* ====================================================================
+   GITHUB SYNC
+   ----------------------------------------------------------------
+   Turns the repo's data.json into the shared source of truth so
+   everyone who opens this page sees everyone else's edits. Reading a
+   public repo's contents works without a token (rate-limited); writing
+   needs a Personal Access Token, which each person pastes into their
+   own browser — it's kept in that browser's localStorage only and is
+   sent straight to api.github.com, never anywhere else.
+   ==================================================================== */
+const GITHUB_OWNER = "hirushafdo1021-bot";
+const GITHUB_REPO = "Projects";
+const GITHUB_BRANCH = "main";
+const GITHUB_PATH = "data.json";
+const GITHUB_TOKEN_KEY = "accessRealEstateDashboard_githubToken";
+const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodeURIComponent(GITHUB_PATH)}`;
+
+let githubFileSha = null;   // sha of the last-known remote data.json, required to push an update
+let githubPushTimer = null; // debounce handle so rapid edits collapse into one commit
+let githubPulling = false;
+let githubPushing = false;
+
+function getGithubToken(){
+  try{ return localStorage.getItem(GITHUB_TOKEN_KEY) || ""; } catch(e){ return ""; }
+}
+function setGithubToken(token){
   try{
-    const testKey = "__storage_test__";
-    localStorage.setItem(testKey, "1");
-    localStorage.removeItem(testKey);
-    return true;
+    if(token) localStorage.setItem(GITHUB_TOKEN_KEY, token);
+    else localStorage.removeItem(GITHUB_TOKEN_KEY);
+  } catch(e){ /* storage unavailable */ }
+}
+
+function b64EncodeUnicode(str){
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  bytes.forEach(b => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+function b64DecodeUnicode(b64){
+  const binary = atob(b64.replace(/\n/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for(let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function githubHeaders(token){
+  const headers = { "Accept": "application/vnd.github+json" };
+  if(token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
+function setGithubStatus(kind, message){
+  const btn = $("#githubSyncBtn");
+  const panelStatus = $("#githubSyncPanelStatus");
+  if(btn){
+    btn.classList.remove("connected", "syncing", "error");
+    if(kind) btn.classList.add(kind);
+    const labels = {
+      connected: "\u2601 GitHub \u00b7 Synced",
+      syncing: "\u2601 GitHub \u00b7 Syncing\u2026",
+      error: "\u2601 GitHub \u00b7 Error",
+    };
+    btn.textContent = labels[kind] || "\u2601 GitHub";
+  }
+  if(panelStatus && message) panelStatus.textContent = message;
+}
+
+/* Pull the latest data.json from the repo and make it this browser's
+   working state. Runs on load, and works even with no token (public
+   repo reads are unauthenticated), so anyone can at least see the
+   latest shared data without setting anything up. */
+async function githubPull(){
+  if(githubPulling) return;
+  githubPulling = true;
+  setGithubStatus("syncing", "Pulling latest data\u2026");
+  try{
+    const res = await fetch(`${GITHUB_API_URL}?ref=${GITHUB_BRANCH}&t=${Date.now()}`, {
+      headers: githubHeaders(getGithubToken()),
+      cache: "no-store",
+    });
+    if(res.status === 404){
+      // data.json doesn't exist in the repo yet — nothing to pull; it'll be created on first push.
+      githubFileSha = null;
+      setGithubStatus(getGithubToken() ? "connected" : "", "No data.json in the repo yet \u2014 it'll be created on your first edit.");
+      return;
+    }
+    if(!res.ok) throw new Error(`GitHub responded ${res.status}`);
+    const json = await res.json();
+    githubFileSha = json.sha;
+    const decoded = b64DecodeUnicode(json.content);
+    const parsed = JSON.parse(decoded);
+    if(parsed.districtLabels) Object.assign(state.districtLabels, parsed.districtLabels);
+    if(parsed.existingStockData){
+      DISTRICT_NAMES.forEach(name => {
+        state.existingStockData[name] = Array.isArray(parsed.existingStockData[name]) ? parsed.existingStockData[name] : [];
+      });
+    }
+    if(parsed.newStockData){
+      DISTRICT_NAMES.forEach(name => {
+        state.newStockData[name] = Array.isArray(parsed.newStockData[name]) ? parsed.newStockData[name] : [];
+      });
+    }
+    renderMaps();
+    if(state.activeTab === "performance") renderPerformance();
+    setGithubStatus(getGithubToken() ? "connected" : "", `Synced with ${GITHUB_OWNER}/${GITHUB_REPO} just now.`);
   } catch(e){
-    return false;
+    setGithubStatus("error", "Couldn't reach GitHub \u2014 check your connection and try again. Nothing is saved locally, so this may be showing an empty or outdated dashboard until it reconnects.");
+  } finally{
+    githubPulling = false;
   }
 }
-let STORAGE_OK = true;
-const STORAGE_KEY = "accessRealEstateDashboard_v3";
 
-/* ---------------- Persistence (localStorage) ----------------
-   Works once this file is served over http(s) — GitHub Pages, any real web
-   host, or a local dev server. Opening the file directly by double-clicking
-   it (a file:// URL) makes some browsers, especially Chrome, block storage
-   entirely — that's the #1 cause of "it doesn't save." Claude.ai's artifact
-   preview sandbox blocks storage too, for the same category of reason.
-
-   existingStockData and newStockData are saved and restored as two fully
-   separate arrays-of-projects per district — this is what keeps the two
-   maps' data independent even across reloads. */
-function saveState(){
-  if(!STORAGE_OK) return;
+/* Push the current state to data.json in the repo. Requires a token
+   (writing needs auth even on a public repo). Debounced by
+   scheduleGithubPush() so a burst of edits becomes one commit. */
+async function githubPush(){
+  const token = getGithubToken();
+  if(!token){
+    setGithubStatus("", "Connect a GitHub token above to save changes for everyone.");
+    return;
+  }
+  if(githubPushing) return;
+  githubPushing = true;
+  setGithubStatus("syncing", "Saving to GitHub\u2026");
   try{
     const payload = {
       districtLabels: state.districtLabels,
       existingStockData: state.existingStockData,
       newStockData: state.newStockData,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    const body = {
+      message: `Update dashboard data \u2014 ${new Date().toISOString()}`,
+      content: b64EncodeUnicode(JSON.stringify(payload, null, 2)),
+      branch: GITHUB_BRANCH,
+    };
+    if(githubFileSha) body.sha = githubFileSha;
+    const res = await fetch(GITHUB_API_URL, {
+      method: "PUT",
+      headers: { ...githubHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if(res.status === 409 || res.status === 422){
+      // Someone else pushed since we last pulled — pull their latest rather than overwrite it.
+      setGithubStatus("error", "Someone else just saved changes \u2014 pulling their latest. Please redo your last edit.");
+      await githubPull();
+      return;
+    }
+    if(!res.ok){
+      const detail = await res.json().catch(() => null);
+      throw new Error((detail && detail.message) || `GitHub responded ${res.status}`);
+    }
+    const json = await res.json();
+    githubFileSha = json.content && json.content.sha ? json.content.sha : githubFileSha;
+    setGithubStatus("connected", "All changes saved to GitHub.");
   } catch(e){
-    STORAGE_OK = false;
-    setSaveIndicator("blocked");
+    setGithubStatus("error", `Save failed: ${e.message || "check your token has write access to this repo."}`);
+  } finally{
+    githubPushing = false;
   }
 }
-function setSaveIndicator(kind){
-  const el = document.getElementById("saveStatus");
-  if(!el) return;
-  if(kind === "ok"){
-    el.textContent = "\u25cf Autosaving to this browser";
-    el.className = "save-status ok";
-  } else {
-    el.textContent = "\u26a0 Not saving \u2014 open this page from its real web address, not a downloaded file";
-    el.className = "save-status warn";
+function scheduleGithubPush(){
+  if(!getGithubToken()) return; // nothing to push without a token
+  clearTimeout(githubPushTimer);
+  githubPushTimer = setTimeout(githubPush, 1200);
+}
+
+function toggleGithubPanel(force){
+  const panel = $("#githubSyncPanel");
+  if(!panel) return;
+  const open = typeof force === "boolean" ? force : !panel.classList.contains("open");
+  panel.classList.toggle("open", open);
+  if(open){
+    const input = $("#githubTokenInput");
+    if(input) input.value = getGithubToken();
   }
 }
-function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return;
-    const parsed = JSON.parse(raw);
-    if(parsed.districtLabels) Object.assign(state.districtLabels, parsed.districtLabels);
-    if(parsed.existingStockData){
-      DISTRICT_NAMES.forEach(name => {
-        if(Array.isArray(parsed.existingStockData[name])) state.existingStockData[name] = parsed.existingStockData[name];
-      });
-    }
-    if(parsed.newStockData){
-      DISTRICT_NAMES.forEach(name => {
-        if(Array.isArray(parsed.newStockData[name])) state.newStockData[name] = parsed.newStockData[name];
-      });
-    }
-  } catch(e){ /* corrupted or unavailable storage — start fresh */ }
+function initGithubSync(){
+  const syncBtn = $("#githubSyncBtn");
+  const wrap = $("#githubSyncWrap");
+  const saveBtn = $("#githubTokenSaveBtn");
+  const clearBtn = $("#githubTokenClearBtn");
+  const input = $("#githubTokenInput");
+  if(!syncBtn) return;
+
+  setGithubStatus(getGithubToken() ? "connected" : "", getGithubToken()
+    ? "Connected \u2014 your edits save automatically."
+    : "Not connected \u2014 you can see updates but not save your own.");
+
+  syncBtn.addEventListener("click", e => { e.stopPropagation(); toggleGithubPanel(); });
+  document.addEventListener("click", e => { if(wrap && !wrap.contains(e.target)) toggleGithubPanel(false); });
+
+  if(saveBtn && input){
+    saveBtn.addEventListener("click", () => {
+      const token = input.value.trim();
+      if(!token){ setGithubStatus("", "Paste a token first."); return; }
+      setGithubToken(token);
+      setGithubStatus("connected", "Connected. Pulling the latest data\u2026");
+      githubPull();
+    });
+  }
+  if(clearBtn){
+    clearBtn.addEventListener("click", () => {
+      setGithubToken("");
+      if(input) input.value = "";
+      setGithubStatus("", "Disconnected \u2014 you'll still see updates, but your edits won't save.");
+    });
+  }
 }
 
 /* ---------------- State ----------------
@@ -1332,13 +1516,11 @@ function escapeAttr(s){ return escapeHtml(s); }
 
 /* ---------------- Init ---------------- */
 function init(){
-  STORAGE_OK = storageAvailable();
-  setSaveIndicator(STORAGE_OK ? "ok" : "blocked");
-  if(STORAGE_OK) loadState();
-
   renderMaps();
   initGlobalSearch();
   initFullscreen();
+  initGithubSync();
+  githubPull();
 
   $$(".tab").forEach(t => t.addEventListener("click", () => setTab(t.dataset.tab)));
 
