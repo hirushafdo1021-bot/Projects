@@ -191,12 +191,17 @@ body.presentation .save-status{ display:none !important; }
   display:flex; flex-direction:column; gap:1px; max-height:180px; overflow-y:auto;
 }
 .stock-summary-row{
-  display:flex; align-items:baseline; gap:6px; padding:4px 0; border-bottom:1px dashed var(--line);
+  display:flex; align-items:baseline; gap:6px; padding:4px 2px; border-bottom:1px dashed var(--line);
+  width:100%; background:none; border-left:none; border-right:none; border-top:none; cursor:pointer;
+  font-family:inherit; text-align:left; border-radius:5px; transition: background .15s;
 }
+.stock-summary-row:hover{ background: rgba(139,28,67,0.06); }
+.stock-summary-row:hover .stock-summary-project{ color: var(--accent); }
 .stock-summary-row:last-child{ border-bottom:none; }
 .stock-summary-name{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px; }
 .stock-summary-project{
   font-size:11px; color: var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  transition: color .15s;
 }
 .stock-summary-district{
   font-size:9.5px; color: var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -545,7 +550,7 @@ body.presentation .map-caption{ font-size:12px; }
         <div class="map-card-body">
           <div class="map-wrap">
             <svg id="existingStockMap" class="district-map" xmlns="http://www.w3.org/2000/svg"></svg>
-            <div class="map-caption">Sri Lanka &middot; 25 Districts &middot; </div>
+            <div class="map-caption" id="existingMapCaption">25 Districts | Click a district for details</div>
           </div>
           <div class="stock-summary-card" id="existingStockSummaryCard">
             <div class="stock-summary-title">Existing Stock Summary</div>
@@ -562,7 +567,7 @@ body.presentation .map-caption{ font-size:12px; }
         <div class="map-card-body">
           <div class="map-wrap">
             <svg id="newStockMap" class="district-map" xmlns="http://www.w3.org/2000/svg"></svg>
-            <div class="map-caption">Sri Lanka &middot;; 25 Districts &middot; </div>
+            <div class="map-caption" id="newMapCaption">25 Districts | Click a district for details</div>
           </div>
           <div class="stock-summary-card" id="newStockSummaryCard">
             <div class="stock-summary-title">New Stock Summary</div>
@@ -838,6 +843,8 @@ function collectProjectsForSummary(mapKey){
   DISTRICT_NAMES.forEach(name => {
     dataset[name].forEach(p => {
       items.push({
+        id: p.id,
+        districtKey: name,
         projectName: p.projectName || "Untitled Project",
         district: state.districtLabels[name],
         value: p[field] || 0,
@@ -850,23 +857,34 @@ function collectProjectsForSummary(mapKey){
 function renderStockSummary(mapKey){
   const listEl = $(mapKey === "existing" ? "#existingStockSummaryList" : "#newStockSummaryList");
   const totalEl = $(mapKey === "existing" ? "#existingStockSummaryTotal" : "#newStockSummaryTotal");
+  const captionEl = $(mapKey === "existing" ? "#existingMapCaption" : "#newMapCaption");
   if(!listEl || !totalEl) return;
 
   const items = collectProjectsForSummary(mapKey);
   const total = items.reduce((s,it) => s + it.value, 0);
+  const activeDistricts = DISTRICT_NAMES.filter(name => districtHasData(name, mapKey)).length;
 
   listEl.innerHTML = items.length === 0
     ? `<div class="stock-summary-empty">No projects yet.</div>`
     : items.map(it => `
-      <div class="stock-summary-row">
+      <button type="button" class="stock-summary-row" data-district="${escapeAttr(it.districtKey)}" data-project-id="${escapeAttr(it.id)}" title="Open ${escapeAttr(it.projectName)}">
         <span class="stock-summary-name">
           <span class="stock-summary-project">${escapeHtml(it.projectName)}</span>
           <span class="stock-summary-district">${escapeHtml(it.district)}</span>
         </span>
         <span class="stock-summary-value">${formatFullNum(it.value)}</span>
-      </div>`).join("");
+      </button>`).join("");
+
+  listEl.querySelectorAll(".stock-summary-row").forEach(row => {
+    row.addEventListener("click", () => {
+      openProjectPopup(row.dataset.district, mapKey, row.dataset.projectId);
+    });
+  });
 
   totalEl.textContent = formatFullNum(total);
+  if(captionEl){
+    captionEl.textContent = `${activeDistricts} of ${DISTRICT_NAMES.length} Districts | ${items.length} Project${items.length===1?"":"s"} | Click a district for details`;
+  }
 }
 function renderStockSummaries(){
   renderStockSummary("existing");
