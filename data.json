@@ -37,16 +37,7 @@
         "existingStock": 20
       }
     ],
-    "Anuradhapura": [
-      {
-        "id": "10tutwn",
-        "projectName": "Untitled Project",
-        "notes": "",
-        "status": "blue",
-        "lastUpdated": "2026-07-17",
-        "existingStock": 50
-      }
-    ],
+    "Anuradhapura": [],
     "Badulla": [],
     "Batticaloa": [],
     "Colombo": [],
