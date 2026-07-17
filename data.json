@@ -31,7 +31,16 @@
     "Anuradhapura": [],
     "Badulla": [],
     "Batticaloa": [],
-    "Colombo": [],
+    "Colombo": [
+      {
+        "id": "2ouj81o",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-17",
+        "existingStock": 0
+      }
+    ],
     "Galle": [],
     "Gampaha": [],
     "Hambantota": [],
