@@ -74,6 +74,14 @@
         "status": "blue",
         "lastUpdated": "2026-07-17",
         "existingStock": 24
+      },
+      {
+        "id": "sgs82nt",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-17",
+        "existingStock": 0
       }
     ],
     "Mannar": [],
