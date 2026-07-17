@@ -556,7 +556,7 @@ body.presentation .map-caption{ font-size:12px; }
       <button class="tab" data-tab="performance">Performance</button>
     </nav>
     <div class="global-search" id="searchWrap">
-      <input type="text" id="globalSearch" placeholder="Search districts or notes…" autocomplete="off"/>
+      <input type="text" id="globalSearch" name="dashboard-search-q" placeholder="Search districts or notes…" autocomplete="off" role="searchbox" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other"/>
       <div class="search-results" id="searchResults"></div>
     </div>
     <div class="actions">
@@ -1346,6 +1346,7 @@ function closeDistrictModal(){
   state.openDistrict = null;
   state.openProjectId = null;
   renderMaps();
+  githubPull();
 }
 function renderPopupFields(name, mapKey, projectId){
   const cfg = MAP_CONFIG[mapKey];
@@ -1515,11 +1516,31 @@ function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, c => ({'&':'&amp;','<
 function escapeAttr(s){ return escapeHtml(s); }
 
 /* ---------------- Init ---------------- */
+const GITHUB_POLL_INTERVAL_MS = 15000; // check GitHub for other people's changes every 15s
+
+function initGithubPolling(){
+  setInterval(() => {
+    // Never pull while a popup is open — that's when a field might be
+    // mid-edit, and swapping the underlying data out from under it
+    // could silently drop what's being typed.
+    if(state.openDistrict) return;
+    if(document.visibilityState !== "visible") return;
+    githubPull();
+  }, GITHUB_POLL_INTERVAL_MS);
+
+  // Also catch up immediately whenever the tab regains focus/visibility,
+  // e.g. after switching back from another tab.
+  document.addEventListener("visibilitychange", () => {
+    if(document.visibilityState === "visible" && !state.openDistrict) githubPull();
+  });
+}
+
 function init(){
   renderMaps();
   initGlobalSearch();
   initFullscreen();
   initGithubSync();
+  initGithubPolling();
   githubPull();
 
   $$(".tab").forEach(t => t.addEventListener("click", () => setTab(t.dataset.tab)));
