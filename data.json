@@ -38,7 +38,16 @@
     "Jaffna": [],
     "Kalutara": [],
     "Kandy": [],
-    "Kegalle": [],
+    "Kegalle": [
+      {
+        "id": "ig4riag",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-17",
+        "existingStock": 0
+      }
+    ],
     "Kilinochchi": [],
     "Kurunegala": [],
     "Mannar": [],
