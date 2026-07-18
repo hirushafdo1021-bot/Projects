@@ -160,7 +160,16 @@
     "Mullaitivu": [],
     "Nuwara Eliya": [],
     "Polonnaruwa": [],
-    "Puttalam": [],
+    "Puttalam": [
+      {
+        "id": "h003iym",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-18",
+        "newStock": 0
+      }
+    ],
     "Ratnapura": [],
     "Trincomalee": [],
     "Vavuniya": []
