@@ -114,7 +114,16 @@
     "Gampaha": [],
     "Hambantota": [],
     "Jaffna": [],
-    "Kalutara": [],
+    "Kalutara": [
+      {
+        "id": "pjf4v4t",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-18",
+        "newStock": 0
+      }
+    ],
     "Kandy": [],
     "Kegalle": [
       {
