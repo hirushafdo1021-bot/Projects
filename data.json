@@ -127,7 +127,16 @@
       }
     ],
     "Kilinochchi": [],
-    "Kurunegala": [],
+    "Kurunegala": [
+      {
+        "id": "uoto0ii",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-18",
+        "newStock": 0
+      }
+    ],
     "Mannar": [],
     "Matale": [],
     "Matara": [],
