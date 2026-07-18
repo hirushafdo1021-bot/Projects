@@ -143,6 +143,14 @@
         "status": "blue",
         "lastUpdated": "2026-07-18",
         "newStock": 35
+      },
+      {
+        "id": "2i8q43y",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-18",
+        "newStock": 0
       }
     ],
     "Mannar": [],
