@@ -163,7 +163,16 @@
     ],
     "Mannar": [],
     "Matale": [],
-    "Matara": [],
+    "Matara": [
+      {
+        "id": "5ycfx6l",
+        "projectName": "Untitled Project",
+        "notes": "",
+        "status": "blue",
+        "lastUpdated": "2026-07-18",
+        "newStock": 0
+      }
+    ],
     "Moneragala": [],
     "Mullaitivu": [],
     "Nuwara Eliya": [],
