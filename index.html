@@ -192,7 +192,7 @@ body.presentation .github-sync-wrap{ display:none !important; }
 .map-card-body{ flex: 1 1 auto; min-height:0; display:flex; gap:0; }
 .map-card-body .map-wrap{ flex: 1 1 68%; }
 .stock-summary-card{
-  flex: 1 1 32%; min-width: 150px; max-width: 210px;
+  flex: 1 1 34%; min-width: 170px; max-width: 250px;
   display:flex; flex-direction:column; gap:6px;
   margin: 12px 12px 12px 0; padding: 12px 12px 10px;
   background: var(--bg); border:1px solid var(--line); border-radius: var(--radius-sm);
@@ -226,6 +226,14 @@ body.presentation .github-sync-wrap{ display:none !important; }
   color: var(--text); text-align:right; min-width:26px;
 }
 .stock-summary-empty{ color: var(--text-3); font-size:11px; font-style:italic; padding: 4px 0; }
+.stock-summary-group + .stock-summary-group{ margin-top:8px; }
+.stock-summary-group-header{
+  display:flex; align-items:flex-start; gap:6px; padding:4px 2px 3px;
+  font-size:9.5px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color: var(--text-3);
+}
+.stock-summary-group-header .status-dot{ width:7px; height:7px; flex:0 0 auto; margin-top:2px; }
+.stock-summary-group-label{ flex:1 1 auto; min-width:0; white-space:normal; word-break:break-word; line-height:1.35; }
+.stock-summary-group-count{ flex:0 0 auto; font-family:'IBM Plex Mono', monospace; color: var(--text-3); }
 .stock-summary-total-row{
   display:flex; align-items:baseline; justify-content:space-between; gap:6px;
   border-top: 3px double var(--text-2); padding-top:7px; margin-top:auto; flex:0 0 auto;
@@ -639,9 +647,9 @@ const DISTRICT_NAMES = Object.keys(GEO.paths);
 
 const STATUS_META = {
   green:  { color: "#00C896", label: "Existing Advance Project", priority: 1 },
-  orange: { color: "#FF9F1C", label: "Negotiate & Under Clearance", priority: 2 },
+  orange: { color: "#FF9F1C", label: "Negotiated", priority: 2 },
   red:    { color: "#FF5C5C", label: "Red", priority: 4 },
-  blue:   { color: "#3B82F6", label: "Pipe line Project", priority: 3 },
+  blue:   { color: "#3B82F6", label: "Projects Under Negotiation", priority: 3 },
   neonblue: { color: "#00E5FF", label: "On Going", priority: 0 },
 };
 
@@ -1133,11 +1141,25 @@ function collectProjectsForSummary(mapKey){
         projectName: p.projectName || "Untitled Project",
         district: state.districtLabels[name],
         value: p[field] || 0,
+        status: STATUS_META[p.status] ? p.status : "blue",
       });
     });
   });
   items.sort((a,b) => b.value - a.value || a.projectName.localeCompare(b.projectName));
   return items;
+}
+/* Buckets the flat project list into one group per status, ordered by
+   that status's `priority` in STATUS_META (lowest first) — reorder or
+   relabel statuses there and the summary groups follow automatically. */
+function groupProjectsByStatus(items){
+  const groups = new Map();
+  items.forEach(it => {
+    if(!groups.has(it.status)) groups.set(it.status, []);
+    groups.get(it.status).push(it);
+  });
+  return Array.from(groups.entries())
+    .map(([status, groupItems]) => ({ status, meta: STATUS_META[status], items: groupItems }))
+    .sort((a,b) => (a.meta.priority ?? 99) - (b.meta.priority ?? 99));
 }
 function renderStockSummary(mapKey){
   const listEl = $(mapKey === "existing" ? "#existingStockSummaryList" : "#newStockSummaryList");
@@ -1148,17 +1170,26 @@ function renderStockSummary(mapKey){
   const items = collectProjectsForSummary(mapKey);
   const total = items.reduce((s,it) => s + it.value, 0);
   const activeDistricts = DISTRICT_NAMES.filter(name => districtHasData(name, mapKey)).length;
+  const groups = groupProjectsByStatus(items);
 
   listEl.innerHTML = items.length === 0
     ? `<div class="stock-summary-empty">No projects yet.</div>`
-    : items.map(it => `
-      <button type="button" class="stock-summary-row" data-district="${escapeAttr(it.districtKey)}" data-project-id="${escapeAttr(it.id)}" title="Open ${escapeAttr(it.projectName)}">
-        <span class="stock-summary-name">
-          <span class="stock-summary-project">${escapeHtml(it.projectName)}</span>
-          <span class="stock-summary-district">${escapeHtml(it.district)}</span>
-        </span>
-        <span class="stock-summary-value">${formatFullNum(it.value)}</span>
-      </button>`).join("");
+    : groups.map(g => `
+      <div class="stock-summary-group">
+        <div class="stock-summary-group-header">
+          <span class="status-dot" style="background:${g.meta.color};color:${g.meta.color}"></span>
+          <span class="stock-summary-group-label">${escapeHtml(g.meta.label)}</span>
+          <span class="stock-summary-group-count">${g.items.length}</span>
+        </div>
+        ${g.items.map(it => `
+        <button type="button" class="stock-summary-row" data-district="${escapeAttr(it.districtKey)}" data-project-id="${escapeAttr(it.id)}" title="Open ${escapeAttr(it.projectName)}">
+          <span class="stock-summary-name">
+            <span class="stock-summary-project">${escapeHtml(it.projectName)}</span>
+            <span class="stock-summary-district">${escapeHtml(it.district)}</span>
+          </span>
+          <span class="stock-summary-value">${formatFullNum(it.value)}</span>
+        </button>`).join("")}
+      </div>`).join("");
 
   listEl.querySelectorAll(".stock-summary-row").forEach(row => {
     row.addEventListener("click", () => {
